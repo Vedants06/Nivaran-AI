@@ -3,6 +3,7 @@ langgraph
 llama-index
 pinecone-client
 streamlit
-google-generativeai
+google-genai
 python-dotenv
 pillow
+groq
