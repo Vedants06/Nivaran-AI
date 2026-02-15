@@ -1,0 +1,8 @@
+crewai
+langgraph
+llama-index
+pinecone-client
+streamlit
+google-generativeai
+python-dotenv
+pillow
