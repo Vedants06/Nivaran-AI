@@ -5,11 +5,16 @@ from PIL import Image
 from dotenv import load_dotenv
 from google import genai
 
-# Load API key
+# Load environment variables
 load_dotenv()
 
+API_KEY = os.getenv("GOOGLE_API_KEY")
+
+if not API_KEY:
+    raise ValueError("GOOGLE_API_KEY not found in .env file")
+
 # Create Gemini client
-client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+client = genai.Client(api_key=API_KEY)
 
 
 def analyze_image(image_path: str) -> dict:
@@ -18,6 +23,14 @@ def analyze_image(image_path: str) -> dict:
     """
 
     try:
+        if not os.path.exists(image_path):
+            return {
+                "hazard": False,
+                "type": "file_not_found",
+                "severity": "unknown",
+                "confidence": 0.0
+            }
+
         img = Image.open(image_path)
 
         prompt = """
@@ -59,21 +72,19 @@ def analyze_image(image_path: str) -> dict:
         )
 
         text = response.text.strip()
-        print(f"RAW RESPONSE ({image_path}):", text)
+        print(f"\nRAW RESPONSE ({image_path}):", text)
 
         match = re.search(r'\{.*\}', text, re.DOTALL)
 
         if match:
-            result = json.loads(match.group())
+            return json.loads(match.group())
         else:
-            result = {
+            return {
                 "hazard": False,
                 "type": "unknown",
                 "severity": "unknown",
                 "confidence": 0.0
             }
-
-        return result
 
     except Exception as e:
         print("Vision Agent Error:", e)
@@ -111,14 +122,23 @@ def analyze_multiple_images(folder_path: str):
     return results
 
 
-if __name__ == "__main__":
-    # Change this to test single image
-    # single_result = analyze_image("flood.jpg")
-    # print("FINAL OUTPUT:", single_result)
+# ------------------------------
+# MAIN EXECUTION
+# ------------------------------
 
-    # Test multiple images from folder
+if __name__ == "__main__":
+
+    print("Vision Agent Testing Mode")
+
+    # OPTION 1: Test Single Image
+    # Uncomment this if you want single test
+    # single_result = analyze_image("flood.jpg")
+    # print("\nFINAL OUTPUT (Single Image):")
+    # print(single_result)
+
+    # OPTION 2: Test Multiple Images
     results = analyze_multiple_images("test_images")
 
-    print("\nFINAL RESULTS:")
+    print("\nFINAL RESULTS (Multiple Images):")
     for r in results:
         print(r)
