@@ -1,6 +1,7 @@
 import streamlit as st
 from PIL import Image
 import time
+from datetime import datetime
 
 st.set_page_config(
     page_title="Nivaran - UI Mockup",
@@ -9,7 +10,7 @@ st.set_page_config(
 )
 
 st.title("🛡️ Nivaran: Disaster Response Dashboard")
-st.caption("Step 5 UI: Approval workflow + Tweet preview (no backend yet).")
+st.caption("Step 6 UI: Multi-disaster tabs + incident log (no backend yet).")
 
 def severity_badge(severity: str) -> str:
     sev = (severity or "").strip().lower()
@@ -23,10 +24,13 @@ def severity_badge(severity: str) -> str:
 
 # Integration point for Vedant later
 def run_pipeline(uploaded_file) -> dict:
-    time.sleep(2)  # simulate processing
+    time.sleep(2)
+
+    # Dummy output (later: replace with LangGraph output)
+    # You can change type here manually to test tabs
     return {
         "detected": "YES",
-        "type": "Flood",
+        "type": "Flood",  # Flood / Landslide / Fire
         "severity": "High",
         "protocol": "Move people to higher ground. Avoid flooded roads. Stop travel in low-lying areas.",
         "alert_en": "⚠️ Flood Alert: Water level is high. Avoid this area and use alternate routes.",
@@ -38,7 +42,9 @@ def run_pipeline(uploaded_file) -> dict:
 if "result" not in st.session_state:
     st.session_state.result = None
 if "approval_status" not in st.session_state:
-    st.session_state.approval_status = "PENDING"  # PENDING / APPROVED / REJECTED
+    st.session_state.approval_status = "PENDING"
+if "incidents" not in st.session_state:
+    st.session_state.incidents = []  # list of dicts
 
 uploaded_file = st.file_uploader(
     "Upload a CCTV/Drone/Public image (jpg/png)",
@@ -64,12 +70,12 @@ with right:
 
     b1, b2 = st.columns([1, 1])
     analyze_btn = b1.button("🚀 Analyze Image")
-    reset_btn = b2.button("🧹 Reset")
+    reset_btn = b2.button("🧹 Reset (clear current)")
 
     if reset_btn:
         st.session_state.result = None
         st.session_state.approval_status = "PENDING"
-        st.success("Cleared previous result ✅")
+        st.success("Cleared current result ✅")
 
     if analyze_btn and uploaded_file is None:
         st.warning("Please upload an image first.")
@@ -77,24 +83,31 @@ with right:
     if analyze_btn and uploaded_file is not None:
         st.session_state.approval_status = "PENDING"
         with st.spinner("AI Agents are thinking..."):
-            st.session_state.result = run_pipeline(uploaded_file)
+            result = run_pipeline(uploaded_file)
+            st.session_state.result = result
+
+            # Save incident record
+            incident = {
+                "id": f"INC-{len(st.session_state.incidents)+1:03d}",
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                **result
+            }
+            st.session_state.incidents.insert(0, incident)  # latest first
 
     result = st.session_state.result
 
-    # Top metrics
-    c1, c2, c3 = st.columns(3)
+    # Tabs for multi-disaster view
+    tab_flood, tab_landslide, tab_fire, tab_all = st.tabs(
+        ["🌧️ Flood", "⛰️ Landslide", "🔥 Fire", "📋 All Incidents"]
+    )
 
-    if result is None:
-        c1.metric("Disaster Detected", "—")
-        c2.metric("Disaster Type", "—")
-        c3.metric("Severity", "—")
-        st.info("Waiting for AI...")
-    else:
-        c1.metric("Disaster Detected", result["detected"])
-        c2.metric("Disaster Type", result["type"])
-        c3.metric("Severity", severity_badge(result["severity"]))
+    # Helper to show one incident
+    def render_incident_view(incident: dict):
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Disaster Detected", incident.get("detected", "—"))
+        c2.metric("Disaster Type", incident.get("type", "—"))
+        c3.metric("Severity", severity_badge(incident.get("severity", "—")))
 
-        # Approval status display
         status = st.session_state.approval_status
         if status == "PENDING":
             st.warning("🟡 Approval Status: PENDING")
@@ -104,37 +117,70 @@ with right:
             st.error("🔴 Approval Status: REJECTED")
 
         st.markdown("### 📘 NDMA Protocol")
-        st.success(result["protocol"])
+        st.success(incident.get("protocol", "—"))
 
         st.markdown("### 🌐 Local Language Alerts")
-        tab1, tab2, tab3 = st.tabs(["English", "Hindi", "Marathi"])
-        with tab1:
-            alert_en = st.text_area("English Alert", value=result["alert_en"], height=80)
-        with tab2:
-            alert_hi = st.text_area("Hindi Alert", value=result["alert_hi"], height=80)
-        with tab3:
-            alert_mr = st.text_area("Marathi Alert", value=result["alert_mr"], height=80)
+        alert_en = st.text_area("English Alert", value=incident.get("alert_en", ""), height=80, key=f"en_{incident.get('id','cur')}")
+        st.text_area("Hindi Alert", value=incident.get("alert_hi", ""), height=80, key=f"hi_{incident.get('id','cur')}")
+        st.text_area("Marathi Alert", value=incident.get("alert_mr", ""), height=80, key=f"mr_{incident.get('id','cur')}")
 
         st.markdown("### ✅ Human-in-the-Loop Approval")
         a1, a2 = st.columns(2)
-        if a1.button("✅ Approve Alert"):
+        if a1.button("✅ Approve Alert", key=f"appr_{incident.get('id','cur')}"):
             st.session_state.approval_status = "APPROVED"
-        if a2.button("❌ Reject Alert"):
+        if a2.button("❌ Reject Alert", key=f"rej_{incident.get('id','cur')}"):
             st.session_state.approval_status = "REJECTED"
 
         st.markdown("### 🐦 Tweet Preview (Draft)")
-        # simple tweet draft (you can later add location, hashtag, etc.)
         tweet_text = f"{alert_en}\n\n#Nivaran #DisasterAlert"
-
-        # character counter
-        char_count = len(tweet_text)
-        st.caption(f"Characters: {char_count}/280")
-
-        # warn if too long
-        if char_count > 280:
+        st.caption(f"Characters: {len(tweet_text)}/280")
+        if len(tweet_text) > 280:
             st.error("Tweet is too long! Please shorten the alert.")
         else:
             st.info("Tweet length is OK ✅")
+        st.text_area("Tweet Draft (Copy & Paste)", value=tweet_text, height=120, key=f"tweet_{incident.get('id','cur')}")
 
-        st.text_area("Tweet Draft (Copy & Paste)", value=tweet_text, height=120)
-        st.caption("Tip: Press Ctrl+A then Ctrl+C to copy.")
+    # Flood tab
+    with tab_flood:
+        st.subheader("🌧️ Flood Incidents")
+        if result is None:
+            st.info("Waiting for AI...")
+        elif result.get("type") != "Flood":
+            st.warning("Current result is not Flood. Try analyzing another image (dummy type is set in code).")
+        else:
+            render_incident_view({"id": "CURRENT", **result})
+
+    # Landslide tab
+    with tab_landslide:
+        st.subheader("⛰️ Landslide Incidents")
+        if result is None:
+            st.info("Waiting for AI...")
+        elif result.get("type") != "Landslide":
+            st.warning("Current result is not Landslide. Try analyzing another image (dummy type is set in code).")
+        else:
+            render_incident_view({"id": "CURRENT", **result})
+
+    # Fire tab
+    with tab_fire:
+        st.subheader("🔥 Fire Incidents")
+        if result is None:
+            st.info("Waiting for AI...")
+        elif result.get("type") != "Fire":
+            st.warning("Current result is not Fire. Try analyzing another image (dummy type is set in code).")
+        else:
+            render_incident_view({"id": "CURRENT", **result})
+
+    # All incidents tab
+    with tab_all:
+        st.subheader("📋 Incident Log")
+        if len(st.session_state.incidents) == 0:
+            st.info("No incidents yet. Click Analyze to generate a record.")
+        else:
+            options = [f"{i['id']} | {i['time']} | {i['type']} | {i['severity']}" for i in st.session_state.incidents]
+            selected = st.selectbox("Select an incident to view details:", options=options)
+            selected_id = selected.split("|")[0].strip()
+
+            chosen = next((i for i in st.session_state.incidents if i["id"] == selected_id), None)
+            if chosen:
+                st.write(f"**Incident:** {chosen['id']}  |  **Time:** {chosen['time']}")
+                render_incident_view(chosen)
