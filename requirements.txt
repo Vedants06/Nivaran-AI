@@ -7,3 +7,5 @@ google-genai
 python-dotenv
 pillow
 groq
+folium
+streamlit-folium

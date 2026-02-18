@@ -3,6 +3,9 @@ from PIL import Image
 import time
 from datetime import datetime
 
+import folium
+from streamlit_folium import st_folium
+
 st.set_page_config(
     page_title="Nivaran - UI Mockup",
     page_icon="🛡️",
@@ -10,7 +13,8 @@ st.set_page_config(
 )
 
 st.title("🛡️ Nivaran: Disaster Response Dashboard")
-st.caption("Step 7 UI: Location input + Map placeholder + incident log (no backend yet).")
+st.caption("UI Mockup: Upload image + map marker + incident log + language selector (no backend yet).")
+
 
 def severity_badge(severity: str) -> str:
     sev = (severity or "").strip().lower()
@@ -22,10 +26,10 @@ def severity_badge(severity: str) -> str:
         return "🟢 LOW"
     return "—"
 
+
 # Integration point for Vedant later
 def run_pipeline(uploaded_file, location_text: str) -> dict:
     time.sleep(2)
-
     # Dummy output (later: replace with LangGraph output)
     return {
         "detected": "YES",
@@ -38,6 +42,7 @@ def run_pipeline(uploaded_file, location_text: str) -> dict:
         "alert_mr": f"⚠️ {location_text or 'या ठिकाणी'} पूर इशारा: पाण्याची पातळी जास्त आहे. हा भाग टाळा आणि पर्यायी मार्ग वापरा."
     }
 
+
 # ---- Session state ----
 if "result" not in st.session_state:
     st.session_state.result = None
@@ -47,16 +52,41 @@ if "incidents" not in st.session_state:
     st.session_state.incidents = []
 if "location_text" not in st.session_state:
     st.session_state.location_text = ""
+if "lat" not in st.session_state:
+    st.session_state.lat = 19.0760   # Mumbai default
+if "lon" not in st.session_state:
+    st.session_state.lon = 72.8777   # Mumbai default
 
-# ---- Sidebar: Location input (simple and realistic) ----
+# ---- Sidebar: Location + Coordinates + Language ----
 st.sidebar.header("📍 Incident Details")
+
 st.session_state.location_text = st.sidebar.text_input(
-    "Enter location (example: Kurla Station / Andheri Subway)",
+    "Enter location name (example: Kurla Station / Andheri Subway)",
     value=st.session_state.location_text
 )
 
-st.sidebar.caption("Tip: For now we use text location only. GPS/map pin can be added later.")
+st.sidebar.subheader("📌 Coordinates (for marker)")
+st.session_state.lat = st.sidebar.number_input(
+    "Latitude",
+    value=float(st.session_state.lat),
+    format="%.6f"
+)
+st.session_state.lon = st.sidebar.number_input(
+    "Longitude",
+    value=float(st.session_state.lon),
+    format="%.6f"
+)
 
+st.sidebar.subheader("🌐 Preferred Alert Language")
+preferred_lang = st.sidebar.radio(
+    "Select language",
+    ["English", "Hindi", "Marathi"],
+    index=0
+)
+
+st.sidebar.caption("Tip: For now, enter lat/lon manually. Later we can auto-convert location → coordinates.")
+
+# ---- Main uploader ----
 uploaded_file = st.file_uploader(
     "Upload a CCTV/Drone/Public image (jpg/png)",
     type=["jpg", "jpeg", "png"]
@@ -68,12 +98,17 @@ left, right = st.columns([1, 1])
 
 # LEFT: Map + image
 with left:
-    st.subheader("🗺️ Map View (Placeholder)")
-    st.info(
-        "Map will be shown here later.\n\n"
-        f"**Current Location:** {st.session_state.location_text or 'Not provided'}"
-    )
-    st.caption("Later: Vedant can add real map using Folium / Streamlit-Folium.")
+    st.subheader("🗺️ Live Map View")
+
+    m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=12)
+
+    folium.Marker(
+        location=[st.session_state.lat, st.session_state.lon],
+        popup=f"{st.session_state.location_text or 'Location'}",
+        tooltip="Incident Location"
+    ).add_to(m)
+
+    st_folium(m, width=700, height=420)
 
     st.subheader("📷 Uploaded Image")
     if uploaded_file is None:
@@ -82,7 +117,7 @@ with left:
         img = Image.open(uploaded_file)
         st.image(img, caption="Image received ✅", use_container_width=True)
 
-# RIGHT: output + actions
+# RIGHT: Output + actions
 with right:
     st.subheader("🤖 AI Output")
 
@@ -104,11 +139,12 @@ with right:
             result = run_pipeline(uploaded_file, st.session_state.location_text)
             st.session_state.result = result
 
-            # Save incident record
             incident = {
                 "id": f"INC-{len(st.session_state.incidents)+1:03d}",
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "location": result.get("location", "Unknown"),
+                "lat": st.session_state.lat,
+                "lon": st.session_state.lon,
                 **result
             }
             st.session_state.incidents.insert(0, incident)
@@ -126,6 +162,7 @@ with right:
         c3.metric("Severity", severity_badge(incident.get("severity", "—")))
 
         st.write(f"**📍 Location:** {incident.get('location','Unknown')}")
+        st.write(f"**🧭 Coordinates:** {incident.get('lat','—')}, {incident.get('lon','—')}")
         st.write(f"**🕒 Time:** {incident.get('time','—')}")
 
         status = st.session_state.approval_status
@@ -136,13 +173,32 @@ with right:
         else:
             st.error("🔴 Approval Status: REJECTED")
 
-        st.markdown("### 📘 NDMA Protocol")
+        st.markdown("### 📘 NDMA Protocol (Mock)")
         st.success(incident.get("protocol", "—"))
 
-        st.markdown("### 🌐 Local Language Alerts")
-        alert_en = st.text_area("English Alert", value=incident.get("alert_en", ""), height=80, key=f"en_{incident.get('id','cur')}")
-        st.text_area("Hindi Alert", value=incident.get("alert_hi", ""), height=80, key=f"hi_{incident.get('id','cur')}")
-        st.text_area("Marathi Alert", value=incident.get("alert_mr", ""), height=80, key=f"mr_{incident.get('id','cur')}")
+        st.markdown("### 🌐 Alert (Selected Language)")
+
+        if preferred_lang == "English":
+            chosen_alert = st.text_area(
+                "Alert (English)",
+                value=incident.get("alert_en", ""),
+                height=120,
+                key=f"chosen_en_{incident.get('id','cur')}"
+            )
+        elif preferred_lang == "Hindi":
+            chosen_alert = st.text_area(
+                "Alert (Hindi)",
+                value=incident.get("alert_hi", ""),
+                height=120,
+                key=f"chosen_hi_{incident.get('id','cur')}"
+            )
+        else:  # Marathi
+            chosen_alert = st.text_area(
+                "Alert (Marathi)",
+                value=incident.get("alert_mr", ""),
+                height=120,
+                key=f"chosen_mr_{incident.get('id','cur')}"
+            )
 
         st.markdown("### ✅ Human-in-the-Loop Approval")
         a1, a2 = st.columns(2)
@@ -152,13 +208,20 @@ with right:
             st.session_state.approval_status = "REJECTED"
 
         st.markdown("### 🐦 Tweet Preview (Draft)")
-        tweet_text = f"{alert_en}\n\n#Nivaran #DisasterAlert"
+        tweet_text = f"{chosen_alert}\n\n#Nivaran #DisasterAlert"
         st.caption(f"Characters: {len(tweet_text)}/280")
+
         if len(tweet_text) > 280:
             st.error("Tweet is too long! Please shorten the alert.")
         else:
             st.info("Tweet length is OK ✅")
-        st.text_area("Tweet Draft (Copy & Paste)", value=tweet_text, height=120, key=f"tweet_{incident.get('id','cur')}")
+
+        st.text_area(
+            "Tweet Draft (Copy & Paste)",
+            value=tweet_text,
+            height=120,
+            key=f"tweet_{incident.get('id','cur')}"
+        )
 
     with tab_flood:
         st.subheader("🌧️ Flood")
@@ -167,7 +230,7 @@ with right:
         elif result.get("type") != "Flood":
             st.warning("Current result is not Flood (dummy type is set in code).")
         else:
-            render_incident_view({"id": "CURRENT", "time": "NOW", **result})
+            render_incident_view({"id": "CURRENT", "time": "NOW", "lat": st.session_state.lat, "lon": st.session_state.lon, **result})
 
     with tab_landslide:
         st.subheader("⛰️ Landslide")
@@ -176,7 +239,7 @@ with right:
         elif result.get("type") != "Landslide":
             st.warning("Current result is not Landslide (dummy type is set in code).")
         else:
-            render_incident_view({"id": "CURRENT", "time": "NOW", **result})
+            render_incident_view({"id": "CURRENT", "time": "NOW", "lat": st.session_state.lat, "lon": st.session_state.lon, **result})
 
     with tab_fire:
         st.subheader("🔥 Fire")
@@ -185,7 +248,7 @@ with right:
         elif result.get("type") != "Fire":
             st.warning("Current result is not Fire (dummy type is set in code).")
         else:
-            render_incident_view({"id": "CURRENT", "time": "NOW", **result})
+            render_incident_view({"id": "CURRENT", "time": "NOW", "lat": st.session_state.lat, "lon": st.session_state.lon, **result})
 
     with tab_all:
         st.subheader("📋 Incident Log")
