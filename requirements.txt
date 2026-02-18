@@ -7,3 +7,5 @@ google-genai
 python-dotenv
 pillow
 groq
+llama-index-embeddings-google-genai 
+llama-index-llms-google-genai
