@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 st.title("🛡️ Nivaran: Disaster Response Dashboard")
-st.caption("Step 6 UI: Multi-disaster tabs + incident log (no backend yet).")
+st.caption("Step 7 UI: Location input + Map placeholder + incident log (no backend yet).")
 
 def severity_badge(severity: str) -> str:
     sev = (severity or "").strip().lower()
@@ -23,19 +23,19 @@ def severity_badge(severity: str) -> str:
     return "—"
 
 # Integration point for Vedant later
-def run_pipeline(uploaded_file) -> dict:
+def run_pipeline(uploaded_file, location_text: str) -> dict:
     time.sleep(2)
 
     # Dummy output (later: replace with LangGraph output)
-    # You can change type here manually to test tabs
     return {
         "detected": "YES",
         "type": "Flood",  # Flood / Landslide / Fire
         "severity": "High",
+        "location": location_text or "Unknown",
         "protocol": "Move people to higher ground. Avoid flooded roads. Stop travel in low-lying areas.",
-        "alert_en": "⚠️ Flood Alert: Water level is high. Avoid this area and use alternate routes.",
-        "alert_hi": "⚠️ बाढ़ चेतावनी: पानी का स्तर ज्यादा है। इस जगह से दूर रहें और दूसरा रास्ता लें।",
-        "alert_mr": "⚠️ पूर इशारा: पाण्याची पातळी जास्त आहे. हा भाग टाळा आणि पर्यायी मार्ग वापरा."
+        "alert_en": f"⚠️ Flood Alert at {location_text or 'this location'}: Water level is high. Avoid this area and use alternate routes.",
+        "alert_hi": f"⚠️ {location_text or 'इस जगह'} पर बाढ़ चेतावनी: पानी का स्तर ज्यादा है। दूर रहें और दूसरा रास्ता लें।",
+        "alert_mr": f"⚠️ {location_text or 'या ठिकाणी'} पूर इशारा: पाण्याची पातळी जास्त आहे. हा भाग टाळा आणि पर्यायी मार्ग वापरा."
     }
 
 # ---- Session state ----
@@ -44,7 +44,18 @@ if "result" not in st.session_state:
 if "approval_status" not in st.session_state:
     st.session_state.approval_status = "PENDING"
 if "incidents" not in st.session_state:
-    st.session_state.incidents = []  # list of dicts
+    st.session_state.incidents = []
+if "location_text" not in st.session_state:
+    st.session_state.location_text = ""
+
+# ---- Sidebar: Location input (simple and realistic) ----
+st.sidebar.header("📍 Incident Details")
+st.session_state.location_text = st.sidebar.text_input(
+    "Enter location (example: Kurla Station / Andheri Subway)",
+    value=st.session_state.location_text
+)
+
+st.sidebar.caption("Tip: For now we use text location only. GPS/map pin can be added later.")
 
 uploaded_file = st.file_uploader(
     "Upload a CCTV/Drone/Public image (jpg/png)",
@@ -55,8 +66,15 @@ st.divider()
 
 left, right = st.columns([1, 1])
 
-# LEFT: image view
+# LEFT: Map + image
 with left:
+    st.subheader("🗺️ Map View (Placeholder)")
+    st.info(
+        "Map will be shown here later.\n\n"
+        f"**Current Location:** {st.session_state.location_text or 'Not provided'}"
+    )
+    st.caption("Later: Vedant can add real map using Folium / Streamlit-Folium.")
+
     st.subheader("📷 Uploaded Image")
     if uploaded_file is None:
         st.info("No image uploaded yet.")
@@ -83,30 +101,32 @@ with right:
     if analyze_btn and uploaded_file is not None:
         st.session_state.approval_status = "PENDING"
         with st.spinner("AI Agents are thinking..."):
-            result = run_pipeline(uploaded_file)
+            result = run_pipeline(uploaded_file, st.session_state.location_text)
             st.session_state.result = result
 
             # Save incident record
             incident = {
                 "id": f"INC-{len(st.session_state.incidents)+1:03d}",
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "location": result.get("location", "Unknown"),
                 **result
             }
-            st.session_state.incidents.insert(0, incident)  # latest first
+            st.session_state.incidents.insert(0, incident)
 
     result = st.session_state.result
 
-    # Tabs for multi-disaster view
     tab_flood, tab_landslide, tab_fire, tab_all = st.tabs(
         ["🌧️ Flood", "⛰️ Landslide", "🔥 Fire", "📋 All Incidents"]
     )
 
-    # Helper to show one incident
     def render_incident_view(incident: dict):
         c1, c2, c3 = st.columns(3)
-        c1.metric("Disaster Detected", incident.get("detected", "—"))
-        c2.metric("Disaster Type", incident.get("type", "—"))
+        c1.metric("Detected", incident.get("detected", "—"))
+        c2.metric("Type", incident.get("type", "—"))
         c3.metric("Severity", severity_badge(incident.get("severity", "—")))
+
+        st.write(f"**📍 Location:** {incident.get('location','Unknown')}")
+        st.write(f"**🕒 Time:** {incident.get('time','—')}")
 
         status = st.session_state.approval_status
         if status == "PENDING":
@@ -140,47 +160,45 @@ with right:
             st.info("Tweet length is OK ✅")
         st.text_area("Tweet Draft (Copy & Paste)", value=tweet_text, height=120, key=f"tweet_{incident.get('id','cur')}")
 
-    # Flood tab
     with tab_flood:
-        st.subheader("🌧️ Flood Incidents")
+        st.subheader("🌧️ Flood")
         if result is None:
             st.info("Waiting for AI...")
         elif result.get("type") != "Flood":
-            st.warning("Current result is not Flood. Try analyzing another image (dummy type is set in code).")
+            st.warning("Current result is not Flood (dummy type is set in code).")
         else:
-            render_incident_view({"id": "CURRENT", **result})
+            render_incident_view({"id": "CURRENT", "time": "NOW", **result})
 
-    # Landslide tab
     with tab_landslide:
-        st.subheader("⛰️ Landslide Incidents")
+        st.subheader("⛰️ Landslide")
         if result is None:
             st.info("Waiting for AI...")
         elif result.get("type") != "Landslide":
-            st.warning("Current result is not Landslide. Try analyzing another image (dummy type is set in code).")
+            st.warning("Current result is not Landslide (dummy type is set in code).")
         else:
-            render_incident_view({"id": "CURRENT", **result})
+            render_incident_view({"id": "CURRENT", "time": "NOW", **result})
 
-    # Fire tab
     with tab_fire:
-        st.subheader("🔥 Fire Incidents")
+        st.subheader("🔥 Fire")
         if result is None:
             st.info("Waiting for AI...")
         elif result.get("type") != "Fire":
-            st.warning("Current result is not Fire. Try analyzing another image (dummy type is set in code).")
+            st.warning("Current result is not Fire (dummy type is set in code).")
         else:
-            render_incident_view({"id": "CURRENT", **result})
+            render_incident_view({"id": "CURRENT", "time": "NOW", **result})
 
-    # All incidents tab
     with tab_all:
         st.subheader("📋 Incident Log")
         if len(st.session_state.incidents) == 0:
             st.info("No incidents yet. Click Analyze to generate a record.")
         else:
-            options = [f"{i['id']} | {i['time']} | {i['type']} | {i['severity']}" for i in st.session_state.incidents]
-            selected = st.selectbox("Select an incident to view details:", options=options)
+            options = [
+                f"{i['id']} | {i['time']} | {i.get('location','Unknown')} | {i['type']} | {i['severity']}"
+                for i in st.session_state.incidents
+            ]
+            selected = st.selectbox("Select an incident to view:", options=options)
             selected_id = selected.split("|")[0].strip()
 
             chosen = next((i for i in st.session_state.incidents if i["id"] == selected_id), None)
             if chosen:
-                st.write(f"**Incident:** {chosen['id']}  |  **Time:** {chosen['time']}")
                 render_incident_view(chosen)
