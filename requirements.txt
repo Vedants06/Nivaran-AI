@@ -7,9 +7,9 @@ google-genai
 python-dotenv
 pillow
 groq
-llama-index-embeddings-google-genai 
+llama-index-embeddings-google-genai
 llama-index-llms-google-genai
-llama-index-llms-groq 
+llama-index-llms-groq
 llama-index-embeddings-huggingface
 google-generativeai>=0.5.2,<0.6
 folium
