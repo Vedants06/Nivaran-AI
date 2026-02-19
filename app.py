@@ -47,6 +47,8 @@ ss_init("lon", 72.8777)       # Mumbai default
 ss_init("alert_en", "")
 ss_init("alert_hi", "")
 ss_init("alert_mr", "")
+ss_init("tweet_public", "")
+ss_init("tweet_authority", "")
 ss_init("map_expanded", False)
 ss_init("uploader_key", 1)
 ss_init("uploaded_once", False)
@@ -194,30 +196,48 @@ def build_map_cached(incidents_hashable, center_lat, center_lon, zoom=11, search
 
 
 # ---------------- Mock pipeline (Vedant will replace later) ----------------
-def run_pipeline(uploaded_file, file_kind: str, location_text: str) -> dict:
-    kind, suffix = _guess_kind_and_suffix(uploaded_file)
-    kind = file_kind or kind
-    temp_path = _save_uploaded_to_temp(uploaded_file, suffix=suffix)
+def run_pipeline(uploaded_file, kind: str, location_text: str) -> dict:
+    temp_path = "temp_upload.jpg"
+    with open(temp_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
 
-    if kind == "video":
-        result = nivaran_graph.invoke({"video_path": temp_path})
-    else:
-        result = nivaran_graph.invoke({"image_path": temp_path})
+    result = nivaran_graph.invoke({"image_path": temp_path})
 
-    vision = result.get("vision_output", {})
+    vision = result["vision_output"]
     return {
         "detected": "YES" if vision.get("hazard") else "NO",
-        "type": str(vision.get("type", "unknown")).capitalize(),
-        "severity": str(vision.get("severity", "unknown")).capitalize(),
+        "type": vision.get("type", "unknown").capitalize(),
+        "severity": vision.get("severity", "unknown").capitalize(),
         "location": location_text or "Unknown",
-        "protocol": result.get("protocol", "—"),
+        "protocol": result["protocol"],
         "alert_en": result.get("alert_en", ""),
         "alert_hi": result.get("alert_hi", ""),
         "alert_mr": result.get("alert_mr", ""),
+        "tweet_public": result.get("tweet_public", ""),
+        "tweet_authority": result.get("tweet_authority", ""),
         "media_kind": kind,
-        "media_name": uploaded_file.name,
+        "media_name": getattr(uploaded_file, "name", "unknown"),
     }
 
+    temp_path = "temp_upload.jpg"
+    with open(temp_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+
+    result = nivaran_graph.invoke({"image_path": temp_path})
+
+    vision = result["vision_output"]
+    return {
+        "detected": "YES" if vision.get("hazard") else "NO",
+        "type": vision.get("type", "unknown").capitalize(),
+        "severity": vision.get("severity", "unknown").capitalize(),
+        "location": location_text or "Unknown",
+        "protocol": result["protocol"],
+        "alert_en": result.get("alert_en", ""),
+        "alert_hi": result.get("alert_hi", ""),
+        "alert_mr": result.get("alert_mr", ""),
+        "tweet_public": result.get("tweet_public", ""),       # ← NEW
+        "tweet_authority": result.get("tweet_authority", ""), # ← NEW
+    }
 
 # ---------------- KPI Row ----------------
 incidents = st.session_state.incidents
@@ -443,6 +463,8 @@ with right:
             st.session_state.alert_en = result.get("alert_en", "")
             st.session_state.alert_hi = result.get("alert_hi", "")
             st.session_state.alert_mr = result.get("alert_mr", "")
+            st.session_state.tweet_public = result.get("tweet_public", "")      # ← ADD
+            st.session_state.tweet_authority = result.get("tweet_authority", "") # ← ADD
 
             incident = {
                 "id": f"INC-{len(st.session_state.incidents)+1:03d}",
@@ -512,21 +534,51 @@ with right:
         if a2.button("❌ Reject Alert", key=f"rej_{incident.get('id', 'cur')}"):
             st.session_state.approval_status = "REJECTED"
 
-        st.markdown("### 🐦 Tweet Preview (Draft)")
-        tweet_text = f"{chosen_alert}\n\n#Nivaran #DisasterAlert"
-        st.caption(f"Characters: {len(tweet_text)}/280")
+        st.markdown("### 🐦 Tweet Drafts")
 
-        if len(tweet_text) > 280:
-            st.error("Tweet is too long! Please shorten the alert.")
-        else:
-            st.info("Tweet length is OK ✅")
+        col1, col2 = st.columns(2)
 
-        st.text_area(
-            "Tweet Draft (Copy & Paste)",
-            value=tweet_text,
-            height=120,
-            key=f"tweet_{incident.get('id', 'cur')}"
-        )
+        with col1:
+            st.markdown("**👥 Public Tweet**")
+            public_tweet = st.text_area(
+                "For general public",
+                value=st.session_state.tweet_public,
+                height=140,
+                key=f"pub_tweet_{incident.get('id', 'cur')}"
+            )
+            char1 = len(public_tweet)
+            st.caption(f"{char1}/280 characters")
+            if char1 > 280:
+                st.error("Too long! Shorten it.")
+            else:
+                st.success("✅ Ready to post")
+
+        with col2:
+            st.markdown("**🚨 Authority Tweet**")
+            auth_tweet = st.text_area(
+                "Tags @RailwayMumbai @MumbaiPolice",
+                value=st.session_state.tweet_authority,
+                height=140,
+                key=f"auth_tweet_{incident.get('id', 'cur')}"
+            )
+            char2 = len(auth_tweet)
+            st.caption(f"{char2}/280 characters")
+            if char2 > 280:
+                st.error("Too long! Shorten it.")
+            else:
+                st.success("✅ Ready to post")
+
+        # if len(tweet_text) > 280:
+        #     st.error("Tweet is too long! Please shorten the alert.")
+        # else:
+        #     st.info("Tweet length is OK ✅")
+
+        # st.text_area(
+        #     "Tweet Draft (Copy & Paste)",
+        #     value=tweet_text,
+        #     height=120,
+        #     key=f"tweet_{incident.get('id', 'cur')}"
+        # )
 
     with tab_flood:
         st.subheader("🌧️ Flood")

@@ -23,6 +23,8 @@ class AgentState(TypedDict):
     alert_en: str
     alert_hi: str
     alert_mr: str
+    tweet_public: str      # ← NEW
+    tweet_authority: str   # ← NEW
 
 
 workflow = StateGraph(AgentState)
@@ -59,9 +61,11 @@ def protocol_node(state: AgentState):
 def alert_node(state: AgentState):
     vision = state["vision_output"]
 
-    # Skip alert generation if no hazard
     if not vision.get("hazard"):
-        return {"alert_en": "", "alert_hi": "", "alert_mr": ""}
+        return {
+            "alert_en": "", "alert_hi": "", "alert_mr": "",
+            "tweet_public": "", "tweet_authority": ""
+        }
 
     disaster_type = vision.get("type", "unknown")
     severity = vision.get("severity", "unknown")
@@ -70,51 +74,60 @@ def alert_node(state: AgentState):
     print(f"\n🌐 Generating multilingual alerts for: {disaster_type} ({severity})")
 
     prompt = f"""You are a disaster alert officer for Mumbai city.
-A {severity} severity {disaster_type} has been detected.
+    A {severity} severity {disaster_type} has been detected at a Mumbai railway station.
 
-NDMA Protocol summary:
-{protocol[:400]}
+    NDMA Protocol summary:
+    {protocol[:400]}
 
-Write 3 short public safety alerts (max 200 characters each).
-Be specific, actionable, and urgent.
+    Generate ALL of the following. Follow the format exactly:
 
-Format strictly as:
-EN: <alert in English>
-HI: <alert in Hindi>
-MR: <alert in Marathi>
+    EN: <Public alert in English, max 180 chars, mention alternate routes>
+    HI: <Public alert in Hindi, max 180 chars>
+    MR: <Public alert in Marathi, max 180 chars>
+    PUBLIC_TWEET: <Tweet for general public, max 220 chars, include #MumbaiRains #Nivaran>
+    AUTHORITY_TWEET: <Tweet tagging @RailwayMumbai @MumbaiPolice @NDMA_India, urgent tone, max 220 chars, include #NivaranAlert>
 
-Only output these 3 lines. Nothing else."""
+    Only output these 5 lines. Nothing else."""
 
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=400
+            max_tokens=600
         )
 
         text = response.choices[0].message.content.strip()
         print(f"\n📢 Raw Alert Output:\n{text}")
 
-        alerts = {"alert_en": "", "alert_hi": "", "alert_mr": ""}
+        output = {
+            "alert_en": "", "alert_hi": "", "alert_mr": "",
+            "tweet_public": "", "tweet_authority": ""
+        }
+
         for line in text.splitlines():
             line = line.strip()
             if line.startswith("EN:"):
-                alerts["alert_en"] = line[3:].strip()
+                output["alert_en"] = line[3:].strip()
             elif line.startswith("HI:"):
-                alerts["alert_hi"] = line[3:].strip()
+                output["alert_hi"] = line[3:].strip()
             elif line.startswith("MR:"):
-                alerts["alert_mr"] = line[3:].strip()
+                output["alert_mr"] = line[3:].strip()
+            elif line.startswith("PUBLIC_TWEET:"):
+                output["tweet_public"] = line[13:].strip()
+            elif line.startswith("AUTHORITY_TWEET:"):
+                output["tweet_authority"] = line[16:].strip()
 
-        return alerts
+        return output
 
     except Exception as e:
         print(f"❌ Alert generation failed: {e}")
         return {
             "alert_en": f"⚠️ {disaster_type.capitalize()} alert. Follow NDMA guidelines.",
             "alert_hi": f"⚠️ {disaster_type} चेतावनी। NDMA दिशानिर्देशों का पालन करें।",
-            "alert_mr": f"⚠️ {disaster_type} इशारा। NDMA मार्गदर्शक तत्त्वांचे पालन करा।"
+            "alert_mr": f"⚠️ {disaster_type} इशारा। NDMA मार्गदर्शक तत्त्वांचे पालन करा।",
+            "tweet_public": f"⚠️ {disaster_type.capitalize()} detected in Mumbai. Stay safe. #MumbaiRains #Nivaran",
+            "tweet_authority": f"@RailwayMumbai @MumbaiPolice 🚨 {disaster_type.capitalize()} HIGH severity. Immediate action needed. #NivaranAlert"
         }
-
 
 # ------------------------------
 # Build Graph
