@@ -1,31 +1,122 @@
+# agents/policy_agent.py
 import os
+import logging
 from dotenv import load_dotenv
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader
-from llama_index.llms.gemini import Gemini
-from llama_index.embeddings.gemini import GeminiEmbedding
 
+from llama_index.core import (
+    VectorStoreIndex,
+    SimpleDirectoryReader,
+    Settings,
+    PromptTemplate
+)
+from llama_index.llms.groq import Groq
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+
+# --------------------------------------------------
+# Silence noisy logs
+# --------------------------------------------------
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("groq").setLevel(logging.WARNING)
+
+# --------------------------------------------------
+# Load env & configure models ONCE at module level
+# --------------------------------------------------
 load_dotenv()
+groq_api_key = os.getenv("GROQ_API_KEY")
 
-API_KEY = os.getenv("GOOGLE_API_KEY")
+if not groq_api_key:
+    raise ValueError("❌ GROQ_API_KEY not found! Check your .env file.")
 
-# Load documents
-documents = SimpleDirectoryReader("data/ndma_docs").load_data()
+Settings.llm = Groq(
+    model="llama-3.1-8b-instant",
+    api_key=groq_api_key
+)
+Settings.embed_model = HuggingFaceEmbedding(
+    model_name="BAAI/bge-small-en-v1.5"
+)
 
-# Create LLM and embedding
-llm = Gemini(model="models/gemini-2.5-flash", api_key=API_KEY)
-embed_model = GeminiEmbedding(model_name="models/embedding-001", api_key=API_KEY)
+# --------------------------------------------------
+# System Prompt
+# --------------------------------------------------
+SYSTEM_PROMPT = """
+You are Nivaran AI, a disaster management assistant.
 
-# Create index
-index = VectorStoreIndex.from_documents(documents, embed_model=embed_model)
+Rules:
+- Answer ONLY using the provided NDMA documents.
+- If the question is not related to disasters, emergency response,
+  safety protocols, or NDMA guidelines, respond with:
+  "❌ This question is outside the scope of disaster management and NDMA guidelines."
+- Do NOT use general knowledge.
+- Do NOT guess.
+- Be concise and actionable. Focus on immediate safety steps.
+"""
 
-query_engine = index.as_query_engine(llm=llm)
+DATA_PATH = "./data/ndma_docs"
+
+# --------------------------------------------------
+# Build index ONCE when module loads (not on every call)
+# --------------------------------------------------
+_query_engine = None
+
+def _load_engine():
+    """Lazy-load the RAG engine once and cache it."""
+    global _query_engine
+
+    if _query_engine is not None:
+        return _query_engine
+
+    if not os.path.exists(DATA_PATH) or not os.listdir(DATA_PATH):
+        raise FileNotFoundError(
+            f"❌ NDMA docs folder '{DATA_PATH}' is missing or empty. "
+            "Add NDMA PDFs before running."
+        )
+
+    print("📂 Loading NDMA PDFs (first call only)...")
+    documents = SimpleDirectoryReader(
+        DATA_PATH,
+        recursive=True,
+        required_exts=[".pdf"]
+    ).load_data()
+
+    print(f"✅ Indexed {len(documents)} pages.")
+
+    index = VectorStoreIndex.from_documents(documents)
+
+    _query_engine = index.as_query_engine(
+        similarity_top_k=5,
+        text_qa_template=PromptTemplate(
+            SYSTEM_PROMPT +
+            "\n\nContext:\n{context_str}\n\nQuestion: {query_str}\nAnswer:"
+        )
+    )
+
+    return _query_engine
 
 
-def get_safety_protocol(disaster_type: str):
-    query = f"What are the official safety protocols for {disaster_type}?"
-    response = query_engine.query(query)
-    return str(response)
+# --------------------------------------------------
+# 🔑 THE CALLABLE FUNCTION Vedant's graph.py imports
+# --------------------------------------------------
+def get_protocol(disaster_type: str) -> str:
+    """
+    Given a disaster type (e.g. 'flood', 'landslide', 'fire'),
+    query the NDMA knowledge base and return safety protocol text.
 
-if __name__ == "__main__":
-    result = get_safety_protocol("flood")
-    print(result)
+    Returns a plain string — ready to drop into AgentState["protocol"].
+    """
+    if not disaster_type or disaster_type.lower() in ["none", "unknown", "error"]:
+        return "No disaster detected. No action required."
+
+    query = f"What are the immediate safety steps and emergency protocol for a {disaster_type}?"
+
+    try:
+        engine = _load_engine()
+        response = engine.query(query)
+        return str(response)
+
+    except FileNotFoundError as e:
+        print(str(e))
+        return f"⚠️ Protocol lookup failed: NDMA docs not found. Manual response required for {disaster_type}."
+
+    except Exception as e:
+        print(f"❌ RAG error: {e}")
+        return f"⚠️ Protocol lookup failed due to an error. Manual response required for {disaster_type}."

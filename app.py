@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 import folium
 from streamlit_folium import st_folium
+from graph import app as nivaran_graph
 
 
 # ---------------- Page config ----------------
@@ -30,6 +31,12 @@ if "lat" not in st.session_state:
     st.session_state.lat = 19.0760   # Mumbai default
 if "lon" not in st.session_state:
     st.session_state.lon = 72.8777   # Mumbai default
+if "alert_en" not in st.session_state:
+    st.session_state.alert_en = ""
+if "alert_hi" not in st.session_state:
+    st.session_state.alert_hi = ""
+if "alert_mr" not in st.session_state:
+    st.session_state.alert_mr = ""
 
 
 # ---------------- Helpers ----------------
@@ -63,17 +70,24 @@ def get_marker_color(disaster_type: str) -> str:
 
 
 # ---------------- Mock pipeline (Vedant will replace later) ----------------
+
 def run_pipeline(uploaded_file, location_text: str) -> dict:
-    time.sleep(2)
+    temp_path = "temp_upload.jpg"
+    with open(temp_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+
+    result = nivaran_graph.invoke({"image_path": temp_path})
+
+    vision = result["vision_output"]
     return {
-        "detected": "YES",
-        "type": "Flood",  # Flood / Landslide / Fire
-        "severity": "High",
+        "detected": "YES" if vision.get("hazard") else "NO",
+        "type": vision.get("type", "unknown").capitalize(),
+        "severity": vision.get("severity", "unknown").capitalize(),
         "location": location_text or "Unknown",
-        "protocol": "Move people to higher ground. Avoid flooded roads. Stop travel in low-lying areas.",
-        "alert_en": f"⚠️ Flood Alert at {location_text or 'this location'}: Water level is high. Avoid this area and use alternate routes.",
-        "alert_hi": f"⚠️ {location_text or 'इस जगह'} पर बाढ़ चेतावनी: पानी का स्तर ज्यादा है। दूर रहें और दूसरा रास्ता लें।",
-        "alert_mr": f"⚠️ {location_text or 'या ठिकाणी'} पूर इशारा: पाण्याची पातळी जास्त आहे. हा भाग टाळा आणि पर्यायी मार्ग वापरा."
+        "protocol": result["protocol"],
+        "alert_en": result.get("alert_en", ""),
+        "alert_hi": result.get("alert_hi", ""),
+        "alert_mr": result.get("alert_mr", ""),
     }
 
 
@@ -193,6 +207,10 @@ with right:
             result = run_pipeline(uploaded_file, st.session_state.location_text)
             st.session_state.result = result
 
+            st.session_state.alert_en = result.get("alert_en", "")
+            st.session_state.alert_hi = result.get("alert_hi", "")
+            st.session_state.alert_mr = result.get("alert_mr", "")
+
             incident = {
                 "id": f"INC-{len(st.session_state.incidents)+1:03d}",
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -234,25 +252,24 @@ with right:
         if preferred_lang == "English":
             chosen_alert = st.text_area(
                 "Alert (English)",
-                value=incident.get("alert_en", ""),
+                value=st.session_state.alert_en,   # ← session state
                 height=120,
                 key=f"chosen_en_{incident.get('id', 'cur')}"
             )
         elif preferred_lang == "Hindi":
             chosen_alert = st.text_area(
                 "Alert (Hindi)",
-                value=incident.get("alert_hi", ""),
+                value=st.session_state.alert_hi,   # ← session state
                 height=120,
                 key=f"chosen_hi_{incident.get('id', 'cur')}"
             )
         else:
             chosen_alert = st.text_area(
                 "Alert (Marathi)",
-                value=incident.get("alert_mr", ""),
+                value=st.session_state.alert_mr,   # ← session state
                 height=120,
                 key=f"chosen_mr_{incident.get('id', 'cur')}"
             )
-
         st.markdown("### ✅ Human-in-the-Loop Approval")
         a1, a2 = st.columns(2)
         if a1.button("✅ Approve Alert", key=f"appr_{incident.get('id', 'cur')}"):
