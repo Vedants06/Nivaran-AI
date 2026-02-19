@@ -2,7 +2,6 @@
 import os
 import logging
 from dotenv import load_dotenv
-
 from llama_index.core import (
     VectorStoreIndex,
     SimpleDirectoryReader,
@@ -11,6 +10,9 @@ from llama_index.core import (
 )
 from llama_index.llms.groq import Groq
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["HF_DATASETS_OFFLINE"] = "1"
 
 # --------------------------------------------------
 # Silence noisy logs
