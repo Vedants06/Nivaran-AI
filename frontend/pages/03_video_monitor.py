@@ -154,7 +154,7 @@ if start_btn:
         caps.append(cv2.VideoCapture(path))
 
     fps_list = [max(cap.get(cv2.CAP_PROP_FPS), 1) for cap in caps]
-    sample_interval = 5  # seconds
+    sample_interval = 30  # seconds
     frame_intervals = [int(fps * sample_interval) for fps in fps_list]
     frame_counts = [0, 0, 0]
 
@@ -185,7 +185,8 @@ if start_btn:
             timestamp = datetime.now().strftime("%H:%M:%S")
 
             try:
-                temp_frame = f"temp_cam_{i}_frame.jpg"
+                root_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                temp_frame = os.path.join(root_path, f"temp_cam_{i}_frame.jpg")
                 cv2.imwrite(temp_frame, frame)
 
                 result = nivaran_graph.invoke({"image_path": temp_frame})
