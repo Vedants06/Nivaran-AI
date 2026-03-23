@@ -4,7 +4,7 @@ import re
 from PIL import Image
 from dotenv import load_dotenv
 from google import genai
-
+ 
 # Load environment variables
 load_dotenv()
 
@@ -12,7 +12,7 @@ API_KEY = os.getenv("GOOGLE_API_KEY")
 
 if not API_KEY:
     raise ValueError("GOOGLE_API_KEY not found in .env file")
-
+000
 # Create Gemini client
 client = genai.Client(api_key=API_KEY)
 
