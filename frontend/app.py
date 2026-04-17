@@ -6,6 +6,7 @@ from streamlit_folium import st_folium
 import tempfile
 import os
 import sys
+import json
 import requests
 
 # Fix import path
@@ -29,7 +30,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🛡️ Nivaran: Disaster Response Dashboard")
-st.caption("Real-time disaster detection, NDMA protocol retrieval, and multilingual alert generation.")
+st.caption("Multi-factor flood detection, NDMA protocol retrieval, and multilingual alert generation.")
 
 # ---------------- Session state ----------------
 def ss_init(key, value):
@@ -58,6 +59,7 @@ ss_init("last_search_name", "")
 ss_init("last_search_lat", None)
 ss_init("last_search_lon", None)
 ss_init("last_search_address", "")
+ss_init("demo_mode", True)
 
 # Load persistent incidents from DB on first load
 if not st.session_state.incidents:
@@ -70,6 +72,24 @@ def severity_badge(severity: str) -> str:
     if sev == "medium": return "🟠 MEDIUM"
     if sev == "low":    return "🟢 LOW"
     return "—"
+
+def risk_badge(risk_level: str) -> str:
+    level = (risk_level or "").strip().upper()
+    if level == "CRITICAL": return "🔴 CRITICAL"
+    if level == "HIGH":     return "🟠 HIGH"
+    if level == "MODERATE": return "🟡 MODERATE"
+    if level == "LOW":      return "🟢 LOW"
+    if level == "MINIMAL":  return "🔵 MINIMAL"
+    return "⚪ UNKNOWN"
+
+def risk_color(risk_level: str) -> str:
+    level = (risk_level or "").strip().upper()
+    if level == "CRITICAL": return "#E74C3C"
+    if level == "HIGH":     return "#E67E22"
+    if level == "MODERATE": return "#F1C40F"
+    if level == "LOW":      return "#27AE60"
+    if level == "MINIMAL":  return "#3498DB"
+    return "#95A5A6"
 
 def count_by_type(incidents, disaster_type):
     return sum(1 for i in incidents if i.get("type") == disaster_type)
@@ -84,7 +104,9 @@ def get_marker_color(disaster_type):
     return "gray"
 
 def _incidents_hashable(incidents_list):
-    return tuple(tuple(sorted(i.items())) for i in incidents_list)
+    return tuple(tuple(sorted(
+        (k, str(v)) for k, v in i.items()
+    )) for i in incidents_list)
 
 def _guess_kind_and_suffix(uploaded_file):
     name = (uploaded_file.name or "").lower()
@@ -136,28 +158,48 @@ def build_map_cached(incidents_hashable, center_lat, center_lon, zoom=11, search
     return m
 
 # ---------------- Pipeline ----------------
-def run_pipeline(uploaded_file, kind: str, location_text: str) -> dict:
+def run_pipeline(uploaded_file, kind: str, location_text: str,
+                 lat: float = 19.076, lon: float = 72.877,
+                 demo_mode: bool = True) -> dict:
     temp_path = "temp_upload.jpg"
     with open(temp_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    result = nivaran_graph.invoke({"image_path": temp_path})
+    zone_name = location_text if location_text else "Dadar"
+
+    result = nivaran_graph.invoke({
+        "image_path": temp_path,
+        "zone_name": zone_name,
+        "lat": lat,
+        "lon": lon,
+        "demo_mode": demo_mode
+    })
+
     vision = result["vision_output"]
+    risk = result.get("multi_factor_risk", {})
 
     return {
-        "detected":        "YES" if vision.get("hazard") else "NO",
-        "type":            vision.get("type", "unknown").capitalize(),
-        "severity":        vision.get("severity", "unknown").capitalize(),
-        "confidence":      vision.get("confidence", 0.0),
-        "location":        location_text or "Unknown",
-        "protocol":        result["protocol"],
-        "alert_en":        result.get("alert_en", ""),
-        "alert_hi":        result.get("alert_hi", ""),
-        "alert_mr":        result.get("alert_mr", ""),
-        "tweet_public":    result.get("tweet_public", ""),
-        "tweet_authority": result.get("tweet_authority", ""),
-        "media_kind":      kind,
-        "media_name":      getattr(uploaded_file, "name", "unknown"),
+        "detected":            "YES" if vision.get("hazard") else "NO",
+        "type":                vision.get("type", "unknown").capitalize(),
+        "severity":            vision.get("severity", "unknown").capitalize(),
+        "confidence":          vision.get("confidence", 0.0),
+        "location":            location_text or "Unknown",
+        "lat":                 lat,
+        "lon":                 lon,
+        "protocol":            result.get("protocol", ""),
+        "alert_en":            result.get("alert_en", ""),
+        "alert_hi":            result.get("alert_hi", ""),
+        "alert_mr":            result.get("alert_mr", ""),
+        "tweet_public":        result.get("tweet_public", ""),
+        "tweet_authority":     result.get("tweet_authority", ""),
+        "media_kind":          kind,
+        "media_name":          getattr(uploaded_file, "name", "unknown"),
+        "multi_factor_risk":   risk,
+        "composite_score":     risk.get("composite_risk_score", 0),
+        "risk_level":          risk.get("overall_risk_level", "UNKNOWN"),
+        "factor_breakdown":    risk.get("factor_breakdown", {}),
+        "risk_explanation":    risk.get("explanation", ""),
+        "data_quality":        risk.get("data_quality", {}),
     }
 
 # ---------------- KPI Row ----------------
@@ -226,6 +268,25 @@ if st.session_state.last_search_lat:
 
 st.sidebar.subheader("🌐 Preferred Alert Language")
 preferred_lang = st.sidebar.radio("Select language", ["English", "Hindi", "Marathi"], index=0)
+
+# ── Demo Mode Toggle (NEW) ──────────────────
+st.sidebar.markdown("---")
+st.sidebar.subheader("⚙️ Data Source Mode")
+st.session_state.demo_mode = st.sidebar.toggle(
+    "🌧️ Monsoon Simulation Mode",
+    value=st.session_state.demo_mode,
+    help=(
+        "ON = Simulated monsoon conditions (heavy rain, saturated soil). "
+        "Use this for demos.\n\n"
+        "OFF = Real-time API data from OpenWeatherMap and Open-Meteo. "
+        "Shows actual current weather."
+    )
+)
+
+if st.session_state.demo_mode:
+    st.sidebar.info("🌧️ Using simulated monsoon data")
+else:
+    st.sidebar.success("🌐 Using LIVE weather and soil data")
 
 # Sidebar map
 st.sidebar.markdown("---")
@@ -306,9 +367,16 @@ with right:
 
     if analyze_btn and uploaded_file is not None:
         st.session_state.approval_status = "PENDING"
-        with st.spinner("AI Agents are thinking..."):
+        with st.spinner("AI Agents are analyzing (Vision + Weather + Soil + Seismic)..."):
             kind   = st.session_state.current_file_kind or _guess_kind_and_suffix(uploaded_file)[0]
-            result = run_pipeline(uploaded_file, kind, st.session_state.location_text)
+            result = run_pipeline(
+                uploaded_file,
+                kind,
+                st.session_state.location_text,
+                lat=float(st.session_state.lat),
+                lon=float(st.session_state.lon),
+                demo_mode=st.session_state.demo_mode
+            )
             st.session_state.result          = result
             st.session_state.alert_en        = result.get("alert_en", "")
             st.session_state.alert_hi        = result.get("alert_hi", "")
@@ -326,129 +394,354 @@ with right:
                 **result
             }
 
-            # Save to SQLite
             save_incident(incident)
             st.session_state.incidents = get_all_incidents()
 
     result = st.session_state.result
 
-    tab_flood, tab_landslide, tab_fire, tab_all = st.tabs(
-        ["🌧️ Flood", "⛰️ Landslide", "🔥 Fire", "📋 All Incidents"]
-    )
+    tab_analysis, tab_all = st.tabs(["🔍 Current Analysis", "📋 All Incidents"])
 
-    def render_incident_view(incident: dict):
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Detected",  incident.get("detected", "—"))
-        c2.metric("Type",      incident.get("type", "—"))
-        c3.metric("Severity",  severity_badge(incident.get("severity", "—")))
-
-        st.write(f"**📍 Location:** {incident.get('location', 'Unknown')}")
-        st.write(f"**🧭 Coordinates:** {incident.get('lat', '—')}, {incident.get('lon', '—')}")
-        st.write(f"**🕒 Time:** {incident.get('time') or incident.get('timestamp', '—')}")
-        st.write(f"**📎 Media:** {incident.get('media_kind', '—')} | {incident.get('media_name', '—')}")
-
-        status = st.session_state.approval_status
-        if status == "PENDING":   st.warning("🟡 Approval Status: PENDING")
-        elif status == "APPROVED": st.success("🟢 Approval Status: APPROVED")
-        else:                      st.error("🔴 Approval Status: REJECTED")
-
-        st.markdown("### 📘 NDMA Protocol")
-        st.success(incident.get("protocol", "—"))
-
-        st.markdown("### 🌐 Alert (Selected Language)")
-        if preferred_lang == "English":
-            chosen_alert = st.text_area("Alert (English)", value=st.session_state.alert_en, height=120, key=f"en_{incident.get('id','cur')}")
-        elif preferred_lang == "Hindi":
-            chosen_alert = st.text_area("Alert (Hindi)",   value=st.session_state.alert_hi, height=120, key=f"hi_{incident.get('id','cur')}")
+    with tab_analysis:
+        if result is None:
+            st.info("Upload an image and click Analyze to begin.")
         else:
-            chosen_alert = st.text_area("Alert (Marathi)", value=st.session_state.alert_mr, height=120, key=f"mr_{incident.get('id','cur')}")
+            # ── Detection Metrics ────────────────────
+            st.markdown("### 📷 Visual Detection")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Detected", result.get("detected", "—"))
+            c2.metric("Type", result.get("type", "—"))
+            c3.metric("Severity", severity_badge(result.get("severity", "—")))
+            c4.metric("Confidence", f"{float(result.get('confidence', 0))*100:.0f}%")
 
-        st.markdown("### ✅ Human-in-the-Loop Approval")
-        a1, a2 = st.columns(2)
-        if a1.button("✅ Approve", key=f"appr_{incident.get('id','cur')}"):
-            st.session_state.approval_status = "APPROVED"
-        if a2.button("❌ Reject",  key=f"rej_{incident.get('id','cur')}"):
-            st.session_state.approval_status = "REJECTED"
+            st.write(f"**📍 Location:** {result.get('location', 'Unknown')}")
+            st.write(f"**🧭 Coordinates:** {result.get('lat', '—')}, {result.get('lon', '—')}")
 
-        st.markdown("### 🐦 Tweet Drafts")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**👥 Public Tweet**")
-            pub = st.text_area("Public", value=st.session_state.tweet_public, height=140, key=f"pub_{incident.get('id','cur')}")
-            st.caption(f"{len(pub)}/280")
-            if len(pub) <= 280:
-                st.success("✅ Ready to post")
-            else:
-                st.error("Too long! Shorten it.")
+            # ══════════════════════════════════════════
+            # MULTI-FACTOR RISK BREAKDOWN (NEW SECTION)
+            # ══════════════════════════════════════════
+            st.markdown("---")
+            st.markdown("### 🧠 Multi-Factor Risk Assessment")
 
-        with col2:
-            st.markdown("**🚨 Authority Tweet**")
-            auth = st.text_area("Authority", value=st.session_state.tweet_authority, height=140, key=f"auth_{incident.get('id','cur')}")
-            st.caption(f"{len(auth)}/280")
-            if len(auth) <= 280:
-                st.success("✅ Ready to post")
-            else:
-                st.error("Too long! Shorten it.")
+            composite = result.get("composite_score", 0)
+            r_level = result.get("risk_level", "UNKNOWN")
+            factors = result.get("factor_breakdown", {})
+            data_quality = result.get("data_quality", {})
 
-        # PDF Export
-        st.markdown("### 📄 Export Report")
-        if st.button("📥 Generate PDF Report", key=f"pdf_{incident.get('id','cur')}"):
-            with st.spinner("Generating PDF..."):
-                try:
-                    from backend.utils.report_generator import generate_report
-                    out_path = generate_report(incident)
-                    if out_path and os.path.exists(out_path):
-                        with open(out_path, "rb") as f:
-                            st.download_button(
-                                label="⬇️ Download Report",
-                                data=f,
-                                file_name=os.path.basename(out_path),
-                                mime="application/pdf",
-                                key=f"dl_{incident.get('id','cur')}"
+            # ── Big composite score display ──────────
+            score_col1, score_col2, score_col3 = st.columns([1, 1, 1])
+
+            with score_col1:
+                st.metric(
+                    "Composite Flood Risk",
+                    f"{composite:.1f}/100",
+                    delta=None
+                )
+
+            with score_col2:
+                st.metric(
+                    "Risk Level",
+                    risk_badge(r_level)
+                )
+
+            with score_col3:
+                demo_label = "🌧️ Simulated" if data_quality.get("demo_mode") else "🌐 Live Data"
+                sources_ok = data_quality.get("successful", 0)
+                total_sources = data_quality.get("total_factors", 0)
+                st.metric(
+                    "Data Sources",
+                    f"{sources_ok}/{total_sources} Active",
+                    delta=demo_label
+                )
+
+            # ── Progress bar for composite score ─────
+            st.progress(
+                min(1.0, composite / 100),
+                text=f"Composite Risk: {composite:.1f}% — {r_level}"
+            )
+
+            # ── Individual factor bars ───────────────
+            if factors:
+                st.markdown("#### Factor Breakdown")
+
+                # Define display config for each factor
+                factor_config = {
+                    "visual": {
+                        "icon": "📷",
+                        "label": "Visual Detection",
+                        "help": "AI camera analysis (Gemini 2.5 Flash)"
+                    },
+                    "weather": {
+                        "icon": "🌧️",
+                        "label": "Weather Conditions",
+                        "help": "Rainfall, humidity, pressure, wind"
+                    },
+                    "geological": {
+                        "icon": "🌍",
+                        "label": "Ground Conditions",
+                        "help": "Soil moisture and seismic activity"
+                    },
+                    "historical": {
+                        "icon": "📜",
+                        "label": "Historical Risk",
+                        "help": "BMC flood records for this zone"
+                    },
+                    "forecast": {
+                        "icon": "📅",
+                        "label": "Rain Forecast",
+                        "help": "Incoming rainfall prediction"
+                    },
+                }
+
+                for factor_key, config in factor_config.items():
+                    factor_data = factors.get(factor_key, {})
+                    score = factor_data.get("score", 0)
+                    weight = factor_data.get("weight", 0)
+                    source = factor_data.get("source", "Unknown")
+                    description = factor_data.get("description", "")
+                    has_error = "error" in factor_data
+
+                    # Factor row
+                    f_col1, f_col2, f_col3 = st.columns([2, 3, 1])
+
+                    with f_col1:
+                        st.markdown(
+                            f"**{config['icon']} {config['label']}**"
+                        )
+                        st.caption(f"Weight: {weight:.0%} | Source: {source}")
+
+                    with f_col2:
+                        if has_error:
+                            st.warning(f"⚠️ {factor_data.get('error', 'Unavailable')}")
+                        else:
+                            st.progress(
+                                min(1.0, score / 100),
+                                text=f"{score:.0f}/100"
                             )
-                    else:
-                        st.error("PDF generation failed.")
-                except Exception as e:
-                    st.error(f"Error: {e}")
 
-    with tab_flood:
-        st.subheader("🌧️ Flood")
-        if result is None:
-            st.info("Waiting for AI...")
-        elif result.get("type") != "Flood":
-            st.warning("No flood detected in current analysis.")
-        else:
-            render_incident_view({"id": "CURRENT", "time": "NOW", "lat": st.session_state.lat, "lon": st.session_state.lon, **result})
+                    with f_col3:
+                        contribution = score * weight
+                        st.markdown(f"**+{contribution:.1f}**")
 
-    with tab_landslide:
-        st.subheader("⛰️ Landslide")
-        if result is None:
-            st.info("Waiting for AI...")
-        elif result.get("type") != "Landslide":
-            st.warning("No landslide detected in current analysis.")
-        else:
-            render_incident_view({"id": "CURRENT", "time": "NOW", "lat": st.session_state.lat, "lon": st.session_state.lon, **result})
+                    # Show description in a subtle way
+                    if description and not has_error:
+                        st.caption(f"   ↳ {description}")
 
-    with tab_fire:
-        st.subheader("🔥 Fire")
-        if result is None:
-            st.info("Waiting for AI...")
-        elif result.get("type") != "Fire":
-            st.warning("No fire detected in current analysis.")
-        else:
-            render_incident_view({"id": "CURRENT", "time": "NOW", "lat": st.session_state.lat, "lon": st.session_state.lon, **result})
+                # ── Weather details expander ─────────
+                weather_factor = factors.get("weather", {})
+                weather_raw = weather_factor.get("raw", {})
 
+                if weather_raw:
+                    with st.expander("🌧️ Detailed Weather Data"):
+                        w1, w2, w3, w4 = st.columns(4)
+                        w1.metric(
+                            "💧 Rainfall",
+                            f"{weather_raw.get('rainfall_mm', 0)} mm/hr"
+                        )
+                        w2.metric(
+                            "💦 Humidity",
+                            f"{weather_raw.get('humidity_pct', 0)}%"
+                        )
+                        w3.metric(
+                            "🌡️ Pressure",
+                            f"{weather_raw.get('pressure_hpa', 0)} hPa"
+                        )
+                        w4.metric(
+                            "💨 Wind",
+                            f"{weather_raw.get('wind_speed_ms', 0)} m/s"
+                        )
+                        st.caption(
+                            f"Condition: {weather_raw.get('condition', 'N/A')}"
+                        )
+
+                # ── Geo details expander ─────────────
+                geo_factor = factors.get("geological", {})
+                geo_details = geo_factor.get("details", {})
+
+                if geo_details:
+                    with st.expander("🌍 Detailed Ground Data"):
+                        g1, g2, g3 = st.columns(3)
+                        g1.metric(
+                            "💧 Soil Moisture",
+                            f"{geo_details.get('soil_moisture', 0):.3f}"
+                        )
+                        g2.metric(
+                            "Soil Status",
+                            geo_details.get("soil_status", "N/A")
+                        )
+                        g3.metric(
+                            "🔴 Seismic Events",
+                            f"{geo_details.get('seismic_events', 0)} "
+                            f"(Max M{geo_details.get('max_magnitude', 0)})"
+                        )
+
+            # ── Risk explanation expander ────────────
+            explanation = result.get("risk_explanation", "")
+            if explanation:
+                with st.expander("📊 Full Risk Explanation"):
+                    st.code(explanation, language=None)
+
+            # ══════════════════════════════════════════
+            # END OF MULTI-FACTOR SECTION
+            # ══════════════════════════════════════════
+
+            st.markdown("---")
+
+            # ── Approval Status ──────────────────────
+            status = st.session_state.approval_status
+            if status == "PENDING":   st.warning("🟡 Approval Status: PENDING")
+            elif status == "APPROVED": st.success("🟢 Approval Status: APPROVED")
+            else:                      st.error("🔴 Approval Status: REJECTED")
+
+            # ── NDMA Protocol ────────────────────────
+            st.markdown("### 📘 NDMA Protocol")
+            protocol_text = result.get("protocol", "—")
+            if protocol_text and protocol_text != "—":
+                st.success(protocol_text)
+            else:
+                st.info("No protocol retrieved (risk below threshold or no hazard detected).")
+
+            # ── Alert (Selected Language) ────────────
+            st.markdown("### 🌐 Alert (Selected Language)")
+            if preferred_lang == "English":
+                chosen_alert = st.text_area(
+                    "Alert (English)",
+                    value=st.session_state.alert_en,
+                    height=120, key="en_current"
+                )
+            elif preferred_lang == "Hindi":
+                chosen_alert = st.text_area(
+                    "Alert (Hindi)",
+                    value=st.session_state.alert_hi,
+                    height=120, key="hi_current"
+                )
+            else:
+                chosen_alert = st.text_area(
+                    "Alert (Marathi)",
+                    value=st.session_state.alert_mr,
+                    height=120, key="mr_current"
+                )
+
+            # ── Human-in-the-Loop Approval ───────────
+            st.markdown("### ✅ Human-in-the-Loop Approval")
+            a1, a2 = st.columns(2)
+            if a1.button("✅ Approve", key="appr_current"):
+                st.session_state.approval_status = "APPROVED"
+                st.rerun()
+            if a2.button("❌ Reject",  key="rej_current"):
+                st.session_state.approval_status = "REJECTED"
+                st.rerun()
+
+            # ── Tweet Drafts ─────────────────────────
+            st.markdown("### 🐦 Tweet Drafts")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**👥 Public Tweet**")
+                pub = st.text_area(
+                    "Public",
+                    value=st.session_state.tweet_public,
+                    height=140, key="pub_current"
+                )
+                st.caption(f"{len(pub)}/280")
+                if len(pub) <= 280:
+                    st.success("✅ Ready to post")
+                else:
+                    st.error("Too long! Shorten it.")
+
+            with col2:
+                st.markdown("**🚨 Authority Tweet**")
+                auth = st.text_area(
+                    "Authority",
+                    value=st.session_state.tweet_authority,
+                    height=140, key="auth_current"
+                )
+                st.caption(f"{len(auth)}/280")
+                if len(auth) <= 280:
+                    st.success("✅ Ready to post")
+                else:
+                    st.error("Too long! Shorten it.")
+
+            # ── PDF Export ───────────────────────────
+            st.markdown("### 📄 Export Report")
+            if st.button("📥 Generate PDF Report", key="pdf_current"):
+                with st.spinner("Generating PDF..."):
+                    try:
+                        from backend.utils.report_generator import generate_report
+                        out_path = generate_report(result)
+                        if out_path and os.path.exists(out_path):
+                            with open(out_path, "rb") as f:
+                                st.download_button(
+                                    label="⬇️ Download Report",
+                                    data=f,
+                                    file_name=os.path.basename(out_path),
+                                    mime="application/pdf",
+                                    key="dl_current"
+                                )
+                        else:
+                            st.error("PDF generation failed.")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+    # ── All Incidents Tab ────────────────────────
     with tab_all:
         st.subheader("📋 Incident Log")
         if not st.session_state.incidents:
             st.info("No incidents yet.")
         else:
             options = [
-                f"{i['id']} | {i.get('time') or i.get('timestamp','')} | {i.get('location','Unknown')} | {i.get('type','')} | {i.get('severity','')}"
+                f"{i['id']} | {i.get('time') or i.get('timestamp','')} | "
+                f"{i.get('location','Unknown')} | {i.get('type','')} | "
+                f"{i.get('severity','')} | Risk: {i.get('composite_risk_score', 0):.0f}"
                 for i in st.session_state.incidents
             ]
             selected    = st.selectbox("Select an incident:", options)
             selected_id = selected.split("|")[0].strip()
-            chosen      = next((i for i in st.session_state.incidents if i["id"] == selected_id), None)
+            chosen      = next(
+                (i for i in st.session_state.incidents if i["id"] == selected_id),
+                None
+            )
+
             if chosen:
-                render_incident_view(chosen)
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Type", chosen.get("type", "—"))
+                c2.metric("Severity", severity_badge(chosen.get("severity", "—")))
+                c3.metric("Confidence", f"{float(chosen.get('confidence', 0))*100:.0f}%")
+                c4.metric("Risk Score", f"{float(chosen.get('composite_risk_score', 0)):.0f}/100")
+
+                st.write(f"**📍 Location:** {chosen.get('location', 'Unknown')}")
+                st.write(f"**🧭 Coordinates:** {chosen.get('lat', '—')}, {chosen.get('lon', '—')}")
+                st.write(f"**🕒 Time:** {chosen.get('time') or chosen.get('timestamp', '—')}")
+                st.write(f"**🎯 Risk Level:** {risk_badge(chosen.get('risk_level', 'UNKNOWN'))}")
+
+                # Show weather and geo data if available
+                weather_data = chosen.get("weather_data", {})
+                geo_data = chosen.get("geo_data", {})
+
+                if weather_data and isinstance(weather_data, dict) and weather_data:
+                    with st.expander("🌧️ Weather Data at Time of Incident"):
+                        wd1, wd2, wd3, wd4 = st.columns(4)
+                        wd1.metric("💧 Rainfall", f"{weather_data.get('rainfall_mm', 0)} mm/hr")
+                        wd2.metric("💦 Humidity", f"{weather_data.get('humidity_pct', 0)}%")
+                        wd3.metric("🌡️ Pressure", f"{weather_data.get('pressure_hpa', 0)} hPa")
+                        wd4.metric("💨 Wind", f"{weather_data.get('wind_speed_ms', 0)} m/s")
+
+                if geo_data and isinstance(geo_data, dict) and geo_data:
+                    with st.expander("🌍 Ground Conditions at Time of Incident"):
+                        gd1, gd2, gd3 = st.columns(3)
+                        gd1.metric("💧 Soil Moisture", f"{geo_data.get('soil_moisture', 0):.3f}")
+                        gd2.metric("Status", geo_data.get('soil_status', 'N/A'))
+                        gd3.metric("🔴 Seismic", f"{geo_data.get('seismic_events', 0)} events")
+
+                status = chosen.get("approval_status", "PENDING")
+                if status == "PENDING":   st.warning(f"🟡 Status: PENDING")
+                elif status == "APPROVED": st.success(f"🟢 Status: APPROVED")
+                else:                      st.error(f"🔴 Status: REJECTED")
+
+                if chosen.get("protocol"):
+                    with st.expander("📘 NDMA Protocol"):
+                        st.info(chosen["protocol"])
+
+                if chosen.get("alert_en"):
+                    with st.expander("🌐 Alerts"):
+                        st.write(f"**EN:** {chosen.get('alert_en', '')}")
+                        st.write(f"**HI:** {chosen.get('alert_hi', '')}")
+                        st.write(f"**MR:** {chosen.get('alert_mr', '')}")
