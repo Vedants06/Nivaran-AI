@@ -5,3 +5,4 @@ __pycache__/
 .ipynb_checkpoints/
 backend/reports/report_flood*.pdf
 temp*.jpg
+captures

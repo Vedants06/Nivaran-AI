@@ -6,6 +6,7 @@ from streamlit_folium import st_folium
 import os
 import sys
 import json
+import cv2
 import requests
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -334,9 +335,47 @@ def build_map(incidents_hashable, clat, clon, zoom=11, searched=None):
 # ─────────────────────────────────────────────
 def run_pipeline(uploaded_file, kind, location_text,
                  lat=19.076, lon=72.877, demo_mode=True):
+
     temp_path = "temp_upload.jpg"
-    with open(temp_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
+
+    if kind == "video":
+        # Extract first meaningful frame from video
+        import tempfile as tmpfile
+        suffix = os.path.splitext(uploaded_file.name)[1] or ".mp4"
+        fd, vid_path = tmpfile.mkstemp(suffix=suffix)
+        os.close(fd)
+        with open(vid_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+
+        cap = cv2.VideoCapture(vid_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = max(cap.get(cv2.CAP_PROP_FPS), 1)
+
+        # Jump to 10% into the video to skip intros/dark frames
+        target_frame = max(1, int(total_frames * 0.10))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+
+        ret, frame = cap.read()
+        cap.release()
+        os.remove(vid_path)
+
+        if ret:
+            from PIL import Image as PILImage
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            PILImage.fromarray(frame_rgb).save(temp_path, quality=95)
+        else:
+            # Fallback: try first frame
+            cap2 = cv2.VideoCapture(vid_path)
+            ret2, frame2 = cap2.read()
+            cap2.release()
+            if ret2:
+                from PIL import Image as PILImage
+                frame_rgb = cv2.cvtColor(frame2, cv2.COLOR_BGR2RGB)
+                PILImage.fromarray(frame_rgb).save(temp_path, quality=95)
+    else:
+        # Image upload — save directly
+        with open(temp_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
 
     zone_name = location_text if location_text else "Dadar"
 
@@ -375,7 +414,6 @@ def run_pipeline(uploaded_file, kind, location_text,
         "data_quality":      risk.get("data_quality", {}),
     }
 
-
 # ─────────────────────────────────────────────
 # HEADER
 # ─────────────────────────────────────────────
@@ -412,6 +450,30 @@ kpi_card(k2, count_by_type(incidents, "Flood"),        "Flood")
 kpi_card(k3, count_by_type(incidents, "Landslide"),    "Landslide")
 kpi_card(k4, count_by_type(incidents, "Fire"),         "Fire")
 kpi_card(k5, count_by_severity(incidents, "High"),     "High Severity")
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# ── Pending alerts notification ──────────────
+pending = [
+    i for i in st.session_state.incidents
+    if i.get("approval_status") == "PENDING"
+    and i.get("detected") == "YES"
+]
+
+if pending:
+    st.markdown(f"""
+    <div style="background:#fff3e0;border:1px solid #ffcc80;
+                border-left:4px solid #f57c00;border-radius:6px;
+                padding:0.8rem 1.2rem;margin-bottom:1rem;">
+        <div style="font-size:0.85rem;font-weight:700;color:#e65100;">
+            {len(pending)} incident(s) awaiting officer approval
+        </div>
+        <div style="font-size:0.78rem;color:#555;margin-top:0.3rem;">
+            Review the incident log below or check the All Incidents tab
+            to approve or reject pending alerts.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
